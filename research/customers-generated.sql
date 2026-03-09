@@ -22,7 +22,7 @@ ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_format
 
 CREATE OR REPLACE FUNCTION valid_other(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
-    # other validator test
+    # second validator test
     return not value.startswith('x')
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 --SECURITY DEFINER SET search_path = !TODO!, pg_temp;
