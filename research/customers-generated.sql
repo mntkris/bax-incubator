@@ -2,10 +2,91 @@
 
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 
+DROP DOMAIN IF EXISTS ApartmentNo CASCADE;
+DROP DOMAIN IF EXISTS BuildingNo CASCADE;
+DROP DOMAIN IF EXISTS CityName CASCADE;
+DROP DOMAIN IF EXISTS CountryCode CASCADE;
+DROP DOMAIN IF EXISTS CountryName CASCADE;
 DROP DOMAIN IF EXISTS CustomerSymbol CASCADE;
+DROP DOMAIN IF EXISTS StreetName CASCADE;
+DROP DOMAIN IF EXISTS ZipCode CASCADE;
+
+CREATE DOMAIN ApartmentNo AS VARCHAR(20);
+
+CREATE DOMAIN BuildingNo AS VARCHAR(20);
+
+CREATE DOMAIN CityName AS VARCHAR(100);
+
+CREATE DOMAIN CountryCode AS CHAR(2);
+
+CREATE DOMAIN CountryName AS CHAR(2);
 
 CREATE DOMAIN CustomerSymbol AS VARCHAR(20);
 
+CREATE DOMAIN StreetName AS VARCHAR(200);
+
+CREATE DOMAIN ZipCode AS VARCHAR(15);
+
+
+CREATE OR REPLACE FUNCTION valid_apartment_no(self VARCHAR(20))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'\S{,20}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_apartment_no FROM public;
+
+ALTER DOMAIN ApartmentNo ADD CONSTRAINT ck__valid_apartment_no
+    CHECK (valid_apartment_no(VALUE));
+
+CREATE OR REPLACE FUNCTION valid_building_no(self VARCHAR(20))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'\S{,20}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_building_no FROM public;
+
+ALTER DOMAIN BuildingNo ADD CONSTRAINT ck__valid_building_no
+    CHECK (valid_building_no(VALUE));
+
+CREATE OR REPLACE FUNCTION valid_city_name(self VARCHAR(100))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'\S{3,100}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_city_name FROM public;
+
+ALTER DOMAIN CityName ADD CONSTRAINT ck__valid_city_name
+    CHECK (valid_city_name(VALUE));
+
+CREATE OR REPLACE FUNCTION valid_country_code(self CHAR(2))
+RETURNS BOOLEAN AS $plpython$
+    # two uppercase ascci letters
+    from re import fullmatch
+    return fullmatch(r'[A-Z]{2}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_country_code FROM public;
+
+ALTER DOMAIN CountryCode ADD CONSTRAINT ck__valid_country_code
+    CHECK (valid_country_code(VALUE));
+
+CREATE OR REPLACE FUNCTION valid_country_name(self CHAR(2))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'\S{2,100}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_country_name FROM public;
+
+ALTER DOMAIN CountryName ADD CONSTRAINT ck__valid_country_name
+    CHECK (valid_country_name(VALUE));
 
 CREATE OR REPLACE FUNCTION valid_customer_symbol_format(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
@@ -19,14 +100,37 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_format
     CHECK (valid_customer_symbol_format(VALUE));
 
-
-CREATE OR REPLACE FUNCTION valid_other(self VARCHAR(20))
+CREATE OR REPLACE FUNCTION valid_customer_symbol_first_char(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
-    # second validator test
-    return not value.startswith('x')
+    # first char letter or cipher
+    return 'a' <= value[0] <= 'z' or 'A' <= value[0] <= 'Z' or '0' <= value[0] <= '9'
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 --SECURITY DEFINER SET search_path = !TODO!, pg_temp;
---REVOKE ALL ON FUNCTION valid_other FROM public;
+--REVOKE ALL ON FUNCTION valid_customer_symbol_first_char FROM public;
 
-ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_other
-    CHECK (valid_other(VALUE));
+ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_first_char
+    CHECK (valid_customer_symbol_first_char(VALUE));
+
+CREATE OR REPLACE FUNCTION valid_street_name(self VARCHAR(200))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'\S{3,200}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_street_name FROM public;
+
+ALTER DOMAIN StreetName ADD CONSTRAINT ck__valid_street_name
+    CHECK (valid_street_name(VALUE));
+
+CREATE OR REPLACE FUNCTION valid_zip_code(self VARCHAR(15))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'\S{2,15}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+--SECURITY DEFINER SET search_path = !TODO!, pg_temp;
+--REVOKE ALL ON FUNCTION valid_zip_code FROM public;
+
+ALTER DOMAIN ZipCode ADD CONSTRAINT ck__valid_zip_code
+    CHECK (valid_zip_code(VALUE));
