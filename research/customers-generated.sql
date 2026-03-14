@@ -2,83 +2,40 @@
 
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 
-DROP DOMAIN IF EXISTS ApartmentNo CASCADE;
+DROP DOMAIN IF EXISTS CustomerSymbol CASCADE;
+DROP DOMAIN IF EXISTS StreetName CASCADE;
 DROP DOMAIN IF EXISTS BuildingNo CASCADE;
+DROP DOMAIN IF EXISTS ApartmentNo CASCADE;
+DROP DOMAIN IF EXISTS ZipCode CASCADE;
 DROP DOMAIN IF EXISTS CityName CASCADE;
 DROP DOMAIN IF EXISTS CountryCode CASCADE;
 DROP DOMAIN IF EXISTS CountryName CASCADE;
-DROP DOMAIN IF EXISTS CustomerSymbol CASCADE;
-DROP DOMAIN IF EXISTS StreetName CASCADE;
-DROP DOMAIN IF EXISTS ZipCode CASCADE;
 DROP TYPE IF EXISTS Country_t CASCADE;
 DROP TYPE IF EXISTS Address_t CASCADE;
 
-CREATE DOMAIN ApartmentNo AS VARCHAR(20);
+CREATE DOMAIN CustomerSymbol AS VARCHAR(20);
+
+
+CREATE DOMAIN StreetName AS VARCHAR(200);
+
 
 CREATE DOMAIN BuildingNo AS VARCHAR(20);
 
-CREATE DOMAIN CityName AS VARCHAR(100);
 
-CREATE DOMAIN CountryCode AS CHAR(2);
+CREATE DOMAIN ApartmentNo AS VARCHAR(20);
 
-CREATE DOMAIN CountryName AS VARCHAR(100);
-
-CREATE DOMAIN CustomerSymbol AS VARCHAR(20);
-
-CREATE DOMAIN StreetName AS VARCHAR(200);
 
 CREATE DOMAIN ZipCode AS VARCHAR(15);
 
 
-CREATE OR REPLACE FUNCTION valid_apartment_no(value VARCHAR(20))
-RETURNS BOOLEAN AS $plpython$
-    # without special characters
-    from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', value) is not None
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+CREATE DOMAIN CityName AS VARCHAR(100);
 
-ALTER DOMAIN ApartmentNo ADD CONSTRAINT ck__valid_apartment_no
-    CHECK (valid_apartment_no(VALUE));
 
-CREATE OR REPLACE FUNCTION valid_building_no(value VARCHAR(20))
-RETURNS BOOLEAN AS $plpython$
-    # without special characters
-    from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', value) is not None
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+CREATE DOMAIN CountryCode AS CHAR(2);
 
-ALTER DOMAIN BuildingNo ADD CONSTRAINT ck__valid_building_no
-    CHECK (valid_building_no(VALUE));
 
-CREATE OR REPLACE FUNCTION valid_city_name(value VARCHAR(100))
-RETURNS BOOLEAN AS $plpython$
-    # without special characters
-    from re import fullmatch
-    return fullmatch(r'[ \S]{3,100}', value) is not None
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+CREATE DOMAIN CountryName AS VARCHAR(100);
 
-ALTER DOMAIN CityName ADD CONSTRAINT ck__valid_city_name
-    CHECK (valid_city_name(VALUE));
-
-CREATE OR REPLACE FUNCTION valid_country_code(value CHAR(2))
-RETURNS BOOLEAN AS $plpython$
-    # two uppercase ascci letters
-    from re import fullmatch
-    return fullmatch(r'[A-Z]{2}', value) is not None
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
-
-ALTER DOMAIN CountryCode ADD CONSTRAINT ck__valid_country_code
-    CHECK (valid_country_code(VALUE));
-
-CREATE OR REPLACE FUNCTION valid_country_name(value VARCHAR(100))
-RETURNS BOOLEAN AS $plpython$
-    # without special characters
-    from re import fullmatch
-    return fullmatch(r'[ \S]{2,100}', value) is not None
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
-
-ALTER DOMAIN CountryName ADD CONSTRAINT ck__valid_country_name
-    CHECK (valid_country_name(VALUE));
 
 CREATE OR REPLACE FUNCTION valid_customer_symbol_format(value VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
@@ -99,6 +56,7 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_first_char
     CHECK (valid_customer_symbol_first_char(VALUE));
 
+
 CREATE OR REPLACE FUNCTION valid_street_name(value VARCHAR(200))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
@@ -109,6 +67,29 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 ALTER DOMAIN StreetName ADD CONSTRAINT ck__valid_street_name
     CHECK (valid_street_name(VALUE));
 
+
+CREATE OR REPLACE FUNCTION valid_building_no(value VARCHAR(20))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'[ \S]{,20}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+ALTER DOMAIN BuildingNo ADD CONSTRAINT ck__valid_building_no
+    CHECK (valid_building_no(VALUE));
+
+
+CREATE OR REPLACE FUNCTION valid_apartment_no(value VARCHAR(20))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'[ \S]{,20}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+ALTER DOMAIN ApartmentNo ADD CONSTRAINT ck__valid_apartment_no
+    CHECK (valid_apartment_no(VALUE));
+
+
 CREATE OR REPLACE FUNCTION valid_zip_code(value VARCHAR(15))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
@@ -118,6 +99,39 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 
 ALTER DOMAIN ZipCode ADD CONSTRAINT ck__valid_zip_code
     CHECK (valid_zip_code(VALUE));
+
+
+CREATE OR REPLACE FUNCTION valid_city_name(value VARCHAR(100))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'[ \S]{3,100}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+ALTER DOMAIN CityName ADD CONSTRAINT ck__valid_city_name
+    CHECK (valid_city_name(VALUE));
+
+
+CREATE OR REPLACE FUNCTION valid_country_code(value CHAR(2))
+RETURNS BOOLEAN AS $plpython$
+    # two uppercase ascci letters
+    from re import fullmatch
+    return fullmatch(r'[A-Z]{2}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+ALTER DOMAIN CountryCode ADD CONSTRAINT ck__valid_country_code
+    CHECK (valid_country_code(VALUE));
+
+
+CREATE OR REPLACE FUNCTION valid_country_name(value VARCHAR(100))
+RETURNS BOOLEAN AS $plpython$
+    # without special characters
+    from re import fullmatch
+    return fullmatch(r'[ \S]{2,100}', value) is not None
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+ALTER DOMAIN CountryName ADD CONSTRAINT ck__valid_country_name
+    CHECK (valid_country_name(VALUE));
 
 
 CREATE TYPE Country_t AS (
@@ -133,6 +147,7 @@ CREATE OR REPLACE FUNCTION Country(
 ) RETURNS Country AS $SQL$
     SELECT ROW(code, name);
 $SQL$ LANGUAGE SQL IMMUTABLE;
+
 
 CREATE TYPE Address_t AS (
     street_name StreetName,
@@ -157,6 +172,6 @@ CREATE OR REPLACE FUNCTION Address(
 $SQL$ LANGUAGE SQL IMMUTABLE;
 
 
-SELECT Country('PL', 'Warsaw Bielany');
+SELECT Country('PL', 'POLAND');
 SELECT Address('Dąb Rozwadowskiego', '6', NULL, '00-902', 'Warszawa', Country('PL', 'Polska'));
 

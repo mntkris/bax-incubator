@@ -1,1 +1,2 @@
-.
+inspect.getmembers zwraca posortowane po nazwie
+module __dict__ jest w kolejności definicji

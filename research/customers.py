@@ -30,6 +30,7 @@ import enum
 # ---- core
 
 
+
 @dataclasses.dataclass
 class PGHint:
     """Additional information helping to generate corresponding 
@@ -70,8 +71,11 @@ class BaxModelKind(enum.Enum):
     COMPOSITE = 1
 
 
+# ---- discoverers
+
 def is_bax_composite(obj: typing.Any):
     return (
+        inspect.isclass(obj) and
         issubclass(obj, pydantic.BaseModel) and 
         getattr(obj, 'bax_model_kind', None) == BaxModelKind.COMPOSITE
     )
@@ -87,7 +91,17 @@ def is_bax_scalar(obj: typing.Any):
     )
 
 
-# ---- discoverers
+def get_module_members(
+        module: types.ModuleType, 
+        predicate: typing.Any
+) -> list[tuple[str, typing.Any]]:
+    ord = {name: i for i, name in enumerate(module.__dict__.keys())}
+    ordered = sorted([
+        (ord[name], name, obj) 
+        for name, obj in inspect.getmembers_static(module) 
+        if predicate(obj)
+    ])
+    return [(name, obj) for __, name, obj in ordered]
 
 @dataclasses.dataclass(frozen=True)
 class PredicateInfo:
@@ -261,17 +275,15 @@ class ModuleInfo:
 
         scalars = [
             ScalarInfo.of(name, obj) 
-            for name, obj in inspect.getmembers_static(module)
-            if is_bax_scalar(obj)]
+            for name, obj in get_module_members(module, is_bax_scalar)]
 
-        composites: list[tuple[int, CompositeInfo]] = [
-            (inspect.getsourcelines(cls)[1], CompositeInfo.of(name, cls))
-            for name, cls in inspect.getmembers_static(module, inspect.isclass)
-            if is_bax_composite(cls)]
+        composites = [
+            CompositeInfo.of(name, cls)
+            for name, cls in get_module_members(module, is_bax_composite)]
         
         return ModuleInfo(
             scalars=scalars, 
-            composites=[info for __, info in sorted(composites)]
+            composites=composites
         )
         
     
@@ -438,13 +450,13 @@ CREATE EXTENSION IF NOT EXISTS plpython3u;
 {'\n'.join([f"DROP DOMAIN IF EXISTS {s.name} CASCADE;" for s in mi.scalars])}
 {'\n'.join([f"DROP TYPE IF EXISTS {c.name}_t CASCADE;" for c in mi.composites])}
 
-{'\n\n'.join([s.sql_create_cmd for s in mi.scalars])}
+{'\n\n\n'.join([s.sql_create_cmd for s in mi.scalars])}
 
 
-{'\n\n'.join([s.sql_constraints_cmd for s in mi.scalars if s.sql_constraints_cmd])}
+{'\n\n\n'.join([s.sql_constraints_cmd for s in mi.scalars if s.sql_constraints_cmd])}
 
 
-{'\n\n'.join([c.sql_create_cmd for c in mi.composites])}
+{'\n\n\n'.join([c.sql_create_cmd for c in mi.composites])}
 
 
 SELECT Country('PL', 'POLAND');
