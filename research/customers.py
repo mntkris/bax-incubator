@@ -262,7 +262,6 @@ class CompositeInfo:
             f") RETURNS {self.name} AS $SQL$",
             f"    SELECT ROW({args});",
             f"$SQL$ LANGUAGE SQL IMMUTABLE;"
-
         ])
 
 @dataclasses.dataclass
@@ -464,5 +463,5 @@ SELECT Address('Dąb Rozwadowskiego', '6', NULL, '00-902', 'Warszawa', Country('
 
 """
 
-with open(__file__.replace('.py', '-generated.sql'), 'w') as f:
+with open(__file__.replace('.py', '_generated.sql'), 'w') as f:
     f.write(sql)
