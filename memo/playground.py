@@ -1,28 +1,27 @@
-from pydantic import AfterValidator, BaseModel, model_validator
-from typing import Any, Annotated
-import textwrap
-import inspect
+import pydantic
+import typing
+import re
 
 
 # -------------------------------------------------------------
 # on field itself only first validator raises, all are executed
 # -------------------------------------------------------------
 
-def scalar_validator_1(value: Any) -> Any:
+def scalar_validator_1(value: typing.Any) -> typing.Any:
     print('scalar_validator_1')
     if value == 'error':
         raise ValueError('error_1')
     return value
 
-def scalar_validator_2(value: Any) -> Any:
+def scalar_validator_2(value: typing.Any) -> typing.Any:
     print('scalar_validator_2')
     if value == 'error':
         raise ValueError('error_2')
     return value
 
-Scalar_1 = Annotated[str, AfterValidator(scalar_validator_1), AfterValidator(scalar_validator_2)]
+Scalar_1 = typing.Annotated[str, pydantic.AfterValidator(scalar_validator_1), pydantic.AfterValidator(scalar_validator_2)]
 
-class Composite_1(BaseModel):
+class Composite_1(pydantic.BaseModel):
     f_1: Scalar_1
 
 # x = Composite_1(f_1='222') 
@@ -34,52 +33,60 @@ class Composite_1(BaseModel):
 # predicate as AfterValidator
 # ---------------------------
 
-class BaxModel(BaseModel):
+type Predicate[T] = typing.Callable[[T], bool]
+
+class BaxModel(pydantic.BaseModel):
+    predicates: typing.ClassVar[list[function]] = []
     
-    @staticmethod
-    def with_predicate(errmsg: str):
-        def decorated(predicate: Any):
-            def pydantic_after_validator(obj: Any):
+    @classmethod
+    def with_predicate(cls, errmsg: str):
+        def decorated(predicate: typing.Any):
+            cls.predicates.append(predicate)
+            def pydantic_after_validator(obj: typing.Any):
                 if not predicate(obj):
                     raise ValueError(errmsg)
                 return obj
             return pydantic_after_validator
         return decorated
 
-    @classmethod
-    def predicates(cls):
-        qual_name = 'BaxModel.with_predicate.<locals>.decorated.<locals>.pydantic_after_validator'
-        return [
-            (name, func) 
-            for name, func in inspect.getmembers_static(Composite_2, inspect.isfunction) 
-            if func.__qualname__ == qual_name
-        ]
-
-
-
 class Composite_2(BaxModel):
     f_1: Scalar_1
 
-    @model_validator(mode='after')
+    @pydantic.model_validator(mode='after')
     @BaxModel.with_predicate(errmsg='error error')
-    def model_predicate_1(self) -> bool:
+    def model_predicate_2(self) -> bool:
         """f_1 neq error_2"""
-        return self.f_1 != 'error_2'   
+        return self.f_1 != 'error_2'
 
-print(Composite_2.predicates())
-for __, func in Composite_2.predicates():
-    print(textwrap.dedent(inspect.getsource(func)))
+class Composite_3(BaxModel):
+    f_1: Scalar_1
 
-# print(Composite_2.model_predicate_1.__qualname__)
-# print([(name, func) 
-#        for name, func in inspect.getmembers_static(Composite_2, inspect.isfunction) 
-#        if func.__qualname__ == 'BaxModel.with_predicate.<locals>.decorated.<locals>.pydantic_after_validator'])
-
-
+    @pydantic.model_validator(mode='after')
+    @BaxModel.with_predicate(errmsg='error error')
+    def model_predicate_3(self) -> bool:
+        """f_1 neq error_3"""
+        return self.f_1 != 'error_3'   
 
 
+def model_predicates_of(cls: typing.Any) -> list[function]:
+    return [
+        f for f in cls.predicates
+        if f.__qualname__.split('.')[-2] == cls.__name__
+    ]
 
-# print(isfunction(Composite_2.model_predicate_1))
-# x = Composite_2(f_1='222') 
-# print(Composite_2.model_predicate_1.__closure__)
-# x = Composite_2(f_1='error_2') 
+# print(model_predicates_of(Composite_2))
+# print(model_predicates_of(Composite_3))
+
+
+# ----------------------------
+# change self.xxxx.{}.zzzz to self['xxxx']{}['zzzz']
+
+def dictionarize(body: str) -> str:
+    def repl(match: typing.Match[str]) -> str:
+        text = match.group(0)          # e.g. "self.foo.bar.baz"
+        parts = text.split('.')[1:]    # skip "self"
+        return "self" + "".join(f"['{p}']" for p in parts)
+
+    return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)
+
+

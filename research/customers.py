@@ -25,6 +25,7 @@ import functools
 import dataclasses
 import textwrap
 import enum
+import re
 
 
 # ---- core
@@ -43,7 +44,8 @@ class PGHint:
     type: str
 
 
-type PredicateList[T] = list[tuple[typing.Callable[[T], bool], str]]
+type Predicate[T] = typing.Callable[[T], bool]
+type PredicateList[T] = list[tuple[Predicate[T], str]]
 
 def field_validator[T](predicates: PredicateList[T], value: T):
     """Utility that cummulates predicates and raises aggregated errors (if any)
@@ -69,6 +71,26 @@ def field_validator[T](predicates: PredicateList[T], value: T):
 
 class BaxModelKind(enum.Enum):
     COMPOSITE = 1
+
+
+class BaxModel(pydantic.BaseModel):
+    
+    predicates: typing.ClassVar[list[Predicate[typing.Any]]] = []
+    
+    @classmethod
+    def with_predicate[T](cls, errmsg: str):
+
+        def decorated(predicate: Predicate[T]):
+            cls.predicates.append(predicate)
+        
+            def pydantic_after_validator(obj: typing.Any) -> typing.Any:
+                if not predicate(obj):
+                    raise ValueError(errmsg)
+                return obj
+        
+            return pydantic_after_validator
+        
+        return decorated
 
 
 # ---- discoverers
@@ -104,8 +126,8 @@ def get_module_members(
     return [(name, obj) for __, name, obj in ordered]
 
 @dataclasses.dataclass(frozen=True)
-class PredicateInfo:
-    """Intermediate metadata of predicate.
+class ScalarPredicateInfo:
+    """Intermediate metadata of scalar predicate.
 
     Predicate is function from base type to boolean.
     It should be immutable and pure.
@@ -123,7 +145,7 @@ class PredicateInfo:
     body: str
 
     @staticmethod
-    def of(f: function, pgtype: str) -> PredicateInfo:
+    def of(f: Predicate[typing.Any], pgtype: str) -> ScalarPredicateInfo:
         """Creates PredicateInfo for predicate.
 
         Arguments:
@@ -142,18 +164,87 @@ class PredicateInfo:
         if not doc:
             raise ValueError(f'Predicate must have docstring in [{f.__name__}]')
         
-        body: str = inspect.getsource(typing.cast(typing.Any, f)).split(f'"""{doc}"""\n')[-1].strip('\n')
+        body: str = textwrap.indent(textwrap.dedent(
+            inspect.getsource(typing.cast(typing.Any, f)).split(f'"""{doc}"""\n')[-1].strip('\n')
+        ), '    ')
         if not body:
             raise ValueError(f'No body of predicate found [{f.__name__}]')
         
-        return PredicateInfo(name=f.__name__, pgtype=pgtype, doc=doc, body=body)
+        return ScalarPredicateInfo(name=f.__name__, pgtype=pgtype, doc=doc, body=body)
 
     @functools.cached_property
     def sql_create_cmd(self) -> str:
         """Returns sql command creating plpython3u stored function for predicate"""
 
         return '\n'.join([
-            f"CREATE OR REPLACE FUNCTION {self.name}(value {self.pgtype})",
+            f"CREATE OR REPLACE FUNCTION {self.name}(self {self.pgtype})",
+            f"RETURNS BOOLEAN AS $plpython$",
+            f"{textwrap.indent(self.doc, '    # ')}",
+            f"{self.body}",
+            f"$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; ",
+        ])
+
+
+@dataclasses.dataclass(frozen=True)
+class CompositePredicateInfo:
+    """Intermediate metadata of composite predicate.
+
+    Predicate is function from base type to boolean.
+    It should be immutable and pure.
+    
+    Attributes:
+        name: name of function (in python and postgres)
+        pgtype: postgres base type of corresponding DOMAIN
+        doc: function docstring
+        body: function body 
+    """
+
+    name: str
+    pgtype: str
+    doc: str
+    body: str
+
+    @staticmethod
+    def of(f: Predicate[typing.Any], pgtype: str) -> CompositePredicateInfo:
+        """Creates PredicateInfo for predicate.
+
+        Arguments:
+            f: predicate function
+            pgtype: postgres base type of validated value
+
+        Returns:
+            new PredicateInfo
+
+        Raises:
+            ValueError: raised if no docstring or body
+                cannot be discovered from function's source code
+        """
+
+        def dictionarize(body: str) -> str:
+            def repl(match: typing.Match[str]) -> str:
+                text = match.group(0)
+                parts = text.split('.')[1:]
+                return "self" + "".join(f"['{p}']" for p in parts)
+            return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)
+
+        doc: str | None = inspect.getdoc(f)
+        if not doc:
+            raise ValueError(f'Predicate must have docstring in [{f.__name__}]')
+        
+        body: str = textwrap.indent(textwrap.dedent(
+            inspect.getsource(typing.cast(typing.Any, f)).split(f'"""{doc}"""\n')[-1].strip('\n')
+        ), '    ')
+        if not body:
+            raise ValueError(f'No body of predicate found [{f.__name__}]')
+        
+        return CompositePredicateInfo(name=f.__name__, pgtype=pgtype, doc=doc, body=dictionarize(body))
+
+    @functools.cached_property
+    def sql_create_cmd(self) -> str:
+        """Returns sql command creating plpython3u stored function for predicate"""
+
+        return '\n'.join([
+            f"CREATE OR REPLACE FUNCTION {self.name}(self {self.pgtype}_t)",
             f"RETURNS BOOLEAN AS $plpython$",
             f"{textwrap.indent(self.doc, '    # ')}",
             f"{self.body}",
@@ -181,7 +272,7 @@ class ScalarInfo:
     
     name: str
     pgtype: str
-    predicates: list[PredicateInfo]
+    predicates: list[ScalarPredicateInfo]
 
     @staticmethod
     def of(name: str, annotated: typing.Any) -> ScalarInfo:
@@ -201,7 +292,7 @@ class ScalarInfo:
         annotated.__metadata__ += (name,)
 
         return ScalarInfo(name=name, pgtype=pghint.type, predicates=[
-            PredicateInfo.of(f, pghint.type)
+            ScalarPredicateInfo.of(f, pghint.type)
             for f, __ in typing.cast(functools.partial[typing.Any], validator.func).args[0]
         ])
     
@@ -228,23 +319,30 @@ class CompositeInfo:
 
     name: str
     fields: list[tuple[str, str]]
+    predicates: list[CompositePredicateInfo]
 
     @staticmethod
-    def of(name: str, cls: typing.Type[pydantic.BaseModel]):
+    def of(name: str, cls: typing.Type[BaxModel]):
         
         def resolve_attr_type_name(t: typing.Any):
             match t:
-                case annotated if typing.get_origin(annotated) is typing.Annotated:
+                case annotated if is_bax_scalar(annotated): #typing.get_origin(annotated) is typing.Annotated:
                     return annotated.__metadata__[-1]
                 case cls if is_bax_composite(cls):
                     return cls.__name__
                 case _:
                     raise ValueError('Only Annotetd or BaseModel-derived types allowed')
         
-        return CompositeInfo(name=name, fields=[
-            (name, resolve_attr_type_name(cls.__annotations__[name]))
-            for name in cls.model_fields
-        ])
+        return CompositeInfo(
+            name=name, 
+            fields=[
+                (name, resolve_attr_type_name(cls.__annotations__[name]))
+                for name in cls.model_fields],
+            predicates=[
+                 CompositePredicateInfo.of(func, name)
+                 for func in cls.predicates 
+                 if func.__qualname__.split('.')[-2] == cls.__name__])
+    
     
     @functools.cached_property
     def sql_create_cmd(self) -> str:
@@ -263,6 +361,18 @@ class CompositeInfo:
             f"    SELECT ROW({args});",
             f"$SQL$ LANGUAGE SQL IMMUTABLE;"
         ])
+    
+    @functools.cached_property
+    def sql_constraints_cmd(self) -> str:
+        """Returns sql commands creating check contraints of composite"""
+        return '\n\n'.join([
+            "\n".join([
+                f"{p.sql_create_cmd}",
+                f"",
+                f"ALTER DOMAIN {self.name} ADD CONSTRAINT ck__{p.name}",
+                f"    CHECK ({p.name}(VALUE));",
+            ])
+            for p in self.predicates])
 
 @dataclasses.dataclass
 class ModuleInfo:
@@ -309,10 +419,10 @@ CustomerSymbol = typing.Annotated[
 ]
 
 
-def valid_street_name(value: str) -> bool:
+def valid_street_name(self: str) -> bool:
     """without special characters"""
     from re import fullmatch
-    return fullmatch(r'[ \S]{3,200}', value) is not None
+    return fullmatch(r'[ \S]{3,200}', self) is not None
 
 StreetName = typing.Annotated[
     str,
@@ -324,10 +434,10 @@ StreetName = typing.Annotated[
 ]
 
 
-def valid_building_no(value: str) -> bool:
+def valid_building_no(self: str) -> bool:
     """without special characters"""
     from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', value) is not None
+    return fullmatch(r'[ \S]{,20}', self) is not None
 
 BuildingNo = typing.Annotated[
     str,
@@ -339,10 +449,10 @@ BuildingNo = typing.Annotated[
 ]
 
 
-def valid_apartment_no(value: str) -> bool:
+def valid_apartment_no(self: str) -> bool:
     """without special characters"""
     from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', value) is not None
+    return fullmatch(r'[ \S]{,20}', self) is not None
 
 ApartmentNo = typing.Annotated[
     str,
@@ -354,10 +464,10 @@ ApartmentNo = typing.Annotated[
 ]
 
 
-def valid_zip_code(value: str) -> bool:
+def valid_zip_code(self: str) -> bool:
     """without special characters"""
     from re import fullmatch
-    return fullmatch(r'[ \S]{2,15}', value) is not None
+    return fullmatch(r'[ \S]{2,15}', self) is not None
 
 ZipCode = typing.Annotated[
     str,
@@ -369,10 +479,10 @@ ZipCode = typing.Annotated[
 ]
 
 
-def valid_city_name(value: str) -> bool:
+def valid_city_name(self: str) -> bool:
     """without special characters"""
     from re import fullmatch
-    return fullmatch(r'[ \S]{3,100}', value) is not None
+    return fullmatch(r'[ \S]{3,100}', self) is not None
 
 CityName = typing.Annotated[
     str,
@@ -384,10 +494,10 @@ CityName = typing.Annotated[
 ]
 
 
-def valid_country_code(value: str) -> bool:
+def valid_country_code(self: str) -> bool:
     """two uppercase ascci letters"""
     from re import fullmatch
-    return fullmatch(r'[A-Z]{2}', value) is not None
+    return fullmatch(r'[A-Z]{2}', self) is not None
 
 CountryCode = typing.Annotated[
     str,
@@ -399,10 +509,10 @@ CountryCode = typing.Annotated[
 ]
 
 
-def valid_country_name(value: str) -> bool:
+def valid_country_name(self: str) -> bool:
     """without special characters"""
     from re import fullmatch
-    return fullmatch(r'[ \S]{2,100}', value) is not None
+    return fullmatch(r'[ \S]{2,100}', self) is not None
 
 CountryName = typing.Annotated[
     str,
@@ -414,15 +524,21 @@ CountryName = typing.Annotated[
 ]
 
 
-class Country(pydantic.BaseModel):
+class Country(BaxModel):
 
     bax_model_kind: typing.ClassVar[BaxModelKind] = BaxModelKind.COMPOSITE
 
     code: CountryCode
     name: CountryName
 
+    # @pydantic.model_validator(mode='after')
+    # @BaxModel.with_predicate(errmsg='test predicate')
+    # def valid_test_pred(self) -> bool:
+    #     """test predicate"""
+    #     return True
 
-class Address(pydantic.BaseModel):
+
+class Address(BaxModel):
 
     bax_model_kind: typing.ClassVar[BaxModelKind] = BaxModelKind.COMPOSITE
 
@@ -433,6 +549,16 @@ class Address(pydantic.BaseModel):
     city_name: CityName
     country: Country
 
+    @pydantic.model_validator(mode='after')
+    @BaxModel.with_predicate(errmsg='wrong format of zip code')
+    def valid_zip_code(self) -> bool:
+        """zip code proper format"""
+        import re
+        return (
+            re.fullmatch(r'[0-9]{2}-[0-9]{3}', self.zip_code) is not None
+            if self.country.code == 'PL' else True
+        )
+
 
 # ---- sql generator
 
@@ -440,7 +566,6 @@ import sys
 
 
 mi: ModuleInfo = ModuleInfo.of(sys.modules[__name__])
-
 
 sql = f"""--** generated by customers.py **--
 
@@ -458,10 +583,24 @@ CREATE EXTENSION IF NOT EXISTS plpython3u;
 {'\n\n\n'.join([c.sql_create_cmd for c in mi.composites])}
 
 
+{'\n\n\n'.join([c.sql_constraints_cmd for c in mi.composites if c.sql_constraints_cmd])}
+
+
 SELECT Country('PL', 'POLAND');
-SELECT Address('Dąb Rozwadowskiego', '6', NULL, '00-902', 'Warszawa', Country('PL', 'Polska'));
+SELECT Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', Country('PL', 'Polska'));
 
 """
 
 with open(__file__.replace('.py', '_generated.sql'), 'w') as f:
     f.write(sql)
+
+# ---- mini happy test
+
+c = Country(code='PL', name='Poland')
+a = Address(
+        street_name='Dąb Rozwadowskiego',
+        building_no='6',
+        apartment_no='5',
+        zip_code='00-999',
+        city_name='Warsaw',
+        country=c)

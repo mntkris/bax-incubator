@@ -1,2 +1,8 @@
 inspect.getmembers zwraca posortowane po nazwie
 module __dict__ jest w kolejności definicji
+
+wyłapywanie predykatów w composite jest brzydkie
+sprawdzić ile się da wydziergać z __code__
+
+composite types są przekazywane do funkcji plpython jako dict
+dictionarize zmniena body w kompozytach

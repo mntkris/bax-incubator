@@ -37,7 +37,7 @@ CREATE DOMAIN CountryCode AS CHAR(2);
 CREATE DOMAIN CountryName AS VARCHAR(100);
 
 
-CREATE OR REPLACE FUNCTION valid_customer_symbol_format(value VARCHAR(20))
+CREATE OR REPLACE FUNCTION valid_customer_symbol_format(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # only digits letters and - [ ]
     from re import fullmatch
@@ -47,7 +47,7 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_format
     CHECK (valid_customer_symbol_format(VALUE));
 
-CREATE OR REPLACE FUNCTION valid_customer_symbol_first_char(value VARCHAR(20))
+CREATE OR REPLACE FUNCTION valid_customer_symbol_first_char(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # first char letter or cipher
     return 'a' <= value[0] <= 'z' or 'A' <= value[0] <= 'Z' or '0' <= value[0] <= '9'
@@ -57,77 +57,77 @@ ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_first_char
     CHECK (valid_customer_symbol_first_char(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_street_name(value VARCHAR(200))
+CREATE OR REPLACE FUNCTION valid_street_name(self VARCHAR(200))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{3,200}', value) is not None
+    return fullmatch(r'[ \S]{3,200}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN StreetName ADD CONSTRAINT ck__valid_street_name
     CHECK (valid_street_name(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_building_no(value VARCHAR(20))
+CREATE OR REPLACE FUNCTION valid_building_no(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', value) is not None
+    return fullmatch(r'[ \S]{,20}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN BuildingNo ADD CONSTRAINT ck__valid_building_no
     CHECK (valid_building_no(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_apartment_no(value VARCHAR(20))
+CREATE OR REPLACE FUNCTION valid_apartment_no(self VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', value) is not None
+    return fullmatch(r'[ \S]{,20}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN ApartmentNo ADD CONSTRAINT ck__valid_apartment_no
     CHECK (valid_apartment_no(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_zip_code(value VARCHAR(15))
+CREATE OR REPLACE FUNCTION valid_zip_code(self VARCHAR(15))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{2,15}', value) is not None
+    return fullmatch(r'[ \S]{2,15}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN ZipCode ADD CONSTRAINT ck__valid_zip_code
     CHECK (valid_zip_code(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_city_name(value VARCHAR(100))
+CREATE OR REPLACE FUNCTION valid_city_name(self VARCHAR(100))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{3,100}', value) is not None
+    return fullmatch(r'[ \S]{3,100}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN CityName ADD CONSTRAINT ck__valid_city_name
     CHECK (valid_city_name(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_country_code(value CHAR(2))
+CREATE OR REPLACE FUNCTION valid_country_code(self CHAR(2))
 RETURNS BOOLEAN AS $plpython$
     # two uppercase ascci letters
     from re import fullmatch
-    return fullmatch(r'[A-Z]{2}', value) is not None
+    return fullmatch(r'[A-Z]{2}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN CountryCode ADD CONSTRAINT ck__valid_country_code
     CHECK (valid_country_code(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_country_name(value VARCHAR(100))
+CREATE OR REPLACE FUNCTION valid_country_name(self VARCHAR(100))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{2,100}', value) is not None
+    return fullmatch(r'[ \S]{2,100}', self) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 ALTER DOMAIN CountryName ADD CONSTRAINT ck__valid_country_name
@@ -172,6 +172,20 @@ CREATE OR REPLACE FUNCTION Address(
 $SQL$ LANGUAGE SQL IMMUTABLE;
 
 
+CREATE OR REPLACE FUNCTION valid_zip_code(self Address_t)
+RETURNS BOOLEAN AS $plpython$
+    # zip code proper format
+    import re
+    return (
+        re.fullmatch(r'[0-9]{2}-[0-9]{3}', self['zip_code']) is not None
+        if self['country']['code'] == 'PL' else True
+    )
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+ALTER DOMAIN Address ADD CONSTRAINT ck__valid_zip_code
+    CHECK (valid_zip_code(VALUE));
+
+
 SELECT Country('PL', 'POLAND');
-SELECT Address('Dąb Rozwadowskiego', '6', NULL, '00-902', 'Warszawa', Country('PL', 'Polska'));
+SELECT Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', Country('PL', 'Polska'));
 
