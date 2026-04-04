@@ -83,8 +83,8 @@ def model_predicates_of(cls: typing.Any) -> list[function]:
 
 def dictionarize(body: str) -> str:
     def repl(match: typing.Match[str]) -> str:
-        text = match.group(0)          # e.g. "self.foo.bar.baz"
-        parts = text.split('.')[1:]    # skip "self"
+        text = match.group(0)
+        parts = text.split('.')[1:]
         return "self" + "".join(f"['{p}']" for p in parts)
 
     return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)

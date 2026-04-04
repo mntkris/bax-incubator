@@ -18,7 +18,6 @@ to postgres DOMAIN.
 
 
 import typing
-import types
 import pydantic
 import inspect
 import functools
@@ -113,17 +112,12 @@ def is_bax_scalar(obj: typing.Any):
     )
 
 
-def get_module_members(
-        module: types.ModuleType, 
+def get_schema_members(
+        sch: type,
         predicate: typing.Any
 ) -> list[tuple[str, typing.Any]]:
-    ord = {name: i for i, name in enumerate(module.__dict__.keys())}
-    ordered = sorted([
-        (ord[name], name, obj) 
-        for name, obj in inspect.getmembers_static(module) 
-        if predicate(obj)
-    ])
-    return [(name, obj) for __, name, obj in ordered]
+    return [(name, obj) for name, obj in sch.__dict__.items() if predicate(obj)]
+
 
 @dataclasses.dataclass(frozen=True)
 class ScalarPredicateInfo:
@@ -139,13 +133,14 @@ class ScalarPredicateInfo:
         body: function body 
     """
 
+    schema: str
     name: str
     pgtype: str
     doc: str
     body: str
 
     @staticmethod
-    def of(f: Predicate[typing.Any], pgtype: str) -> ScalarPredicateInfo:
+    def of(schema: str, f: Predicate[typing.Any], pgtype: str) -> ScalarPredicateInfo:
         """Creates PredicateInfo for predicate.
 
         Arguments:
@@ -170,14 +165,14 @@ class ScalarPredicateInfo:
         if not body:
             raise ValueError(f'No body of predicate found [{f.__name__}]')
         
-        return ScalarPredicateInfo(name=f.__name__, pgtype=pgtype, doc=doc, body=body)
+        return ScalarPredicateInfo(schema=schema, name=f.__name__, pgtype=pgtype, doc=doc, body=body)
 
     @functools.cached_property
     def sql_create_cmd(self) -> str:
         """Returns sql command creating plpython3u stored function for predicate"""
 
         return '\n'.join([
-            f"CREATE OR REPLACE FUNCTION {self.name}(self {self.pgtype})",
+            f"CREATE OR REPLACE FUNCTION {self.schema}.{self.name}(value {self.pgtype})",
             f"RETURNS BOOLEAN AS $plpython$",
             f"{textwrap.indent(self.doc, '    # ')}",
             f"{self.body}",
@@ -199,13 +194,14 @@ class CompositePredicateInfo:
         body: function body 
     """
 
+    schema: str
     name: str
     pgtype: str
     doc: str
     body: str
 
     @staticmethod
-    def of(f: Predicate[typing.Any], pgtype: str) -> CompositePredicateInfo:
+    def of(schema: str, f: Predicate[typing.Any], pgtype: str) -> CompositePredicateInfo:
         """Creates PredicateInfo for predicate.
 
         Arguments:
@@ -222,8 +218,7 @@ class CompositePredicateInfo:
 
         def dictionarize(body: str) -> str:
             def repl(match: typing.Match[str]) -> str:
-                text = match.group(0)
-                parts = text.split('.')[1:]
+                parts = match.group(0).split('.')[1:]   # omit self
                 return "self" + "".join(f"['{p}']" for p in parts)
             return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)
 
@@ -237,19 +232,36 @@ class CompositePredicateInfo:
         if not body:
             raise ValueError(f'No body of predicate found [{f.__name__}]')
         
-        return CompositePredicateInfo(name=f.__name__, pgtype=pgtype, doc=doc, body=dictionarize(body))
+        return CompositePredicateInfo(schema=schema, name=f.__name__, pgtype=pgtype, doc=doc, body=dictionarize(body))
 
     @functools.cached_property
     def sql_create_cmd(self) -> str:
         """Returns sql command creating plpython3u stored function for predicate"""
 
         return '\n'.join([
-            f"CREATE OR REPLACE FUNCTION {self.name}(self {self.pgtype}_t)",
+            f"CREATE OR REPLACE FUNCTION {self.schema}.{self.name}(self {self.schema}.{self.pgtype}_t)",
             f"RETURNS BOOLEAN AS $plpython$",
             f"{textwrap.indent(self.doc, '    # ')}",
             f"{self.body}",
             f"$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; ",
         ])
+
+
+type Property[R] = property | functools.cached_property[R]
+
+@dataclasses.dataclass(frozen=True)
+class PropertyInfo[R]:
+
+    schame: str
+    name: str
+    pgtype: str
+    rettype: str
+    doc: str
+    body: str
+
+    @staticmethod
+    def of(schema: str, cfi: pydantic.fields.ComputedFieldInfo, name: str, pgtype: str) -> PropertyInfo[R]:
+        return PropertyInfo[R](schema, name, pgtype, cfi.return_type.__metadata__[-1], 'doc', 'body')
 
 
 @dataclasses.dataclass(frozen=True)
@@ -270,12 +282,13 @@ class ScalarInfo:
         predicates: list of attached PredicateInfo(s)
     """
     
+    schema: str
     name: str
     pgtype: str
     predicates: list[ScalarPredicateInfo]
 
     @staticmethod
-    def of(name: str, annotated: typing.Any) -> ScalarInfo:
+    def of(schema: str, name: str, annotated: typing.Any) -> ScalarInfo:
         """Creates ScalarInfo from annotated type.
         
         Arguments:
@@ -291,15 +304,15 @@ class ScalarInfo:
 
         annotated.__metadata__ += (name,)
 
-        return ScalarInfo(name=name, pgtype=pghint.type, predicates=[
-            ScalarPredicateInfo.of(f, pghint.type)
+        return ScalarInfo(schema=schema, name=name, pgtype=pghint.type, predicates=[
+            ScalarPredicateInfo.of(schema, f, pghint.type)
             for f, __ in typing.cast(functools.partial[typing.Any], validator.func).args[0]
         ])
     
     @functools.cached_property
     def sql_create_cmd(self) -> str:
         """Returns sql command creating DOMAIN for scalar."""
-        return f'CREATE DOMAIN {self.name} AS {self.pgtype};'
+        return f'CREATE DOMAIN {self.schema}.{self.name} AS {self.pgtype};'
     
     @functools.cached_property
     def sql_constraints_cmd(self) -> str:
@@ -308,8 +321,8 @@ class ScalarInfo:
             "\n".join([
                 f"{p.sql_create_cmd}",
                 f"",
-                f"ALTER DOMAIN {self.name} ADD CONSTRAINT ck__{p.name}",
-                f"    CHECK ({p.name}(VALUE));",
+                f"ALTER DOMAIN {self.schema}.{self.name} ADD CONSTRAINT ck__{p.schema}__{p.name}",
+                f"    CHECK ({p.schema}.{p.name}(VALUE));",
             ])
             for p in self.predicates])
 
@@ -317,16 +330,18 @@ class ScalarInfo:
 @dataclasses.dataclass(frozen=True)
 class CompositeInfo:
 
+    schema: str
     name: str
     fields: list[tuple[str, str]]
     predicates: list[CompositePredicateInfo]
+    properties: list[PropertyInfo[typing.Any]]
 
     @staticmethod
-    def of(name: str, cls: typing.Type[BaxModel]):
+    def of(schema: str, name: str, cls: typing.Type[BaxModel]):
         
         def resolve_attr_type_name(t: typing.Any):
             match t:
-                case annotated if is_bax_scalar(annotated): #typing.get_origin(annotated) is typing.Annotated:
+                case annotated if is_bax_scalar(annotated):
                     return annotated.__metadata__[-1]
                 case cls if is_bax_composite(cls):
                     return cls.__name__
@@ -334,30 +349,35 @@ class CompositeInfo:
                     raise ValueError('Only Annotetd or BaseModel-derived types allowed')
         
         return CompositeInfo(
+            schema=schema,
             name=name, 
             fields=[
                 (name, resolve_attr_type_name(cls.__annotations__[name]))
                 for name in cls.model_fields],
             predicates=[
-                 CompositePredicateInfo.of(func, name)
+                 CompositePredicateInfo.of(schema, func, name)
                  for func in cls.predicates 
-                 if func.__qualname__.split('.')[-2] == cls.__name__])
+                 if func.__qualname__.split('.')[-2] == cls.__name__],
+            properties=[])
+            #     PropertyInfo[typing.Any].of(cfi=cfi, name=name, pgtype=cls.__name__)
+            #     for name, cfi in cls.model_computed_fields.items()
+            # ])
     
     
     @functools.cached_property
     def sql_create_cmd(self) -> str:
-        attrs: str = ',\n'.join([f"    {a} {t}" for a, t in self.fields])
+        attrs: str = ',\n'.join([f"    {a} {self.schema}.{t}" for a, t in self.fields])
         args: str = ', '.join([a for a, __ in self.fields])
         return '\n'.join([
-            f"CREATE TYPE {self.name}_t AS (",
+            f"CREATE TYPE {self.schema}.{self.name}_t AS (",
             f"{attrs}",
             f");",
             f"",
-            f"CREATE DOMAIN {self.name} AS {self.name}_t;",
+            f"CREATE DOMAIN {self.schema}.{self.name} AS {self.schema}.{self.name}_t;",
             f"",
-            f"CREATE OR REPLACE FUNCTION {self.name}(",
+            f"CREATE OR REPLACE FUNCTION {self.schema}.{self.name}(",
             f"{attrs}",
-            f") RETURNS {self.name} AS $SQL$",
+            f") RETURNS {self.schema}.{self.name} AS $SQL$",
             f"    SELECT ROW({args});",
             f"$SQL$ LANGUAGE SQL IMMUTABLE;"
         ])
@@ -369,28 +389,28 @@ class CompositeInfo:
             "\n".join([
                 f"{p.sql_create_cmd}",
                 f"",
-                f"ALTER DOMAIN {self.name} ADD CONSTRAINT ck__{p.name}",
-                f"    CHECK ({p.name}(VALUE));",
+                f"ALTER DOMAIN {p.schema}.{self.name} ADD CONSTRAINT ck__{p.schema}__{p.name}",
+                f"    CHECK ({p.schema}.{p.name}(VALUE));",
             ])
             for p in self.predicates])
 
 @dataclasses.dataclass
-class ModuleInfo:
+class SchemaInfo:
     scalars: list[ScalarInfo]
     composites: list[CompositeInfo]
 
     @staticmethod
-    def of(module: types.ModuleType) -> ModuleInfo:
+    def of(sch: type) -> SchemaInfo:
 
         scalars = [
-            ScalarInfo.of(name, obj) 
-            for name, obj in get_module_members(module, is_bax_scalar)]
+            ScalarInfo.of(sch.__name__, name, obj) 
+            for name, obj in get_schema_members(sch, is_bax_scalar)]
 
         composites = [
-            CompositeInfo.of(name, cls)
-            for name, cls in get_module_members(module, is_bax_composite)]
+            CompositeInfo.of(sch.__name__, name, cls)
+            for name, cls in get_schema_members(sch, is_bax_composite)]
         
-        return ModuleInfo(
+        return SchemaInfo(
             scalars=scalars, 
             composites=composites
         )
@@ -399,195 +419,231 @@ class ModuleInfo:
 # predicates: exactly one arg named value, must have unique (in function text) one-line(for now) docstring in """ brackets
 # scalars must be indpendent each other and use only distributed with underlaying python features
 
-def valid_customer_symbol_format(value: str) -> bool:
-    """only digits letters and - [ ]"""
-    from re import fullmatch
-    return fullmatch(r'[0-9a-zA-z\-\[\]]{10,20}', value) is not None
-
-def valid_customer_symbol_first_char(value: str) -> bool:
-    """first char letter or cipher"""
-    return 'a' <= value[0] <= 'z' or 'A' <= value[0] <= 'Z' or '0' <= value[0] <= '9'
-
-CustomerSymbol = typing.Annotated[
-    str, 
-    pydantic.Field(min_length=10, max_length=20, strict=True),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_customer_symbol_format, 'wrong input for customer symbol'), 
-        (valid_customer_symbol_first_char, 'customer symbol must start with letter or cipher'),
-    ])),
-    PGHint(type='VARCHAR(20)'),
-]
+class sch:
+    GenericText = typing.Annotated[
+        str,
+        pydantic.Field(),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [])),
+        PGHint(type='TEXT'),
+    ]
 
 
-def valid_street_name(self: str) -> bool:
-    """without special characters"""
-    from re import fullmatch
-    return fullmatch(r'[ \S]{3,200}', self) is not None
+    @staticmethod
+    def valid_customer_symbol_format(value: str) -> bool:
+        """only digits letters and - [ ]"""
+        from re import fullmatch
+        return fullmatch(r'[0-9a-zA-z\-\[\]]{10,20}', value) is not None
 
-StreetName = typing.Annotated[
-    str,
-    pydantic.Field(min_length=3, max_length=200),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_street_name, 'no special characters allowed in street name')
-    ])),
-    PGHint(type='VARCHAR(200)'),
-]
+    @staticmethod
+    def valid_customer_symbol_first_char(value: str) -> bool:
+        """first char letter or cipher"""
+        return 'a' <= value[0] <= 'z' or 'A' <= value[0] <= 'Z' or '0' <= value[0] <= '9'
 
-
-def valid_building_no(self: str) -> bool:
-    """without special characters"""
-    from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', self) is not None
-
-BuildingNo = typing.Annotated[
-    str,
-    pydantic.Field(max_length=20),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_building_no, 'no special characters allowed in building number')
-    ])),
-    PGHint(type='VARCHAR(20)'),
-]
+    CustomerSymbol = typing.Annotated[
+        str, 
+        pydantic.Field(min_length=10, max_length=20, strict=True),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_customer_symbol_format, 'wrong input for customer symbol'), 
+            (valid_customer_symbol_first_char, 'customer symbol must start with letter or cipher'),
+        ])),
+        PGHint(type='VARCHAR(20)'),
+    ]
 
 
-def valid_apartment_no(self: str) -> bool:
-    """without special characters"""
-    from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', self) is not None
+    @staticmethod
+    def valid_street_name(value: str) -> bool:
+        """without special characters"""
+        from re import fullmatch
+        return fullmatch(r'[ \S]{3,200}', value) is not None
 
-ApartmentNo = typing.Annotated[
-    str,
-    pydantic.Field(max_length=20),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_apartment_no, 'no special characters allowed in apartment number')
-    ])),
-    PGHint(type='VARCHAR(20)'),
-]
-
-
-def valid_zip_code(self: str) -> bool:
-    """without special characters"""
-    from re import fullmatch
-    return fullmatch(r'[ \S]{2,15}', self) is not None
-
-ZipCode = typing.Annotated[
-    str,
-    pydantic.Field(min_length=2, max_length=15),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_zip_code, 'no special characters allowed in zip code')
-    ])),
-    PGHint(type='VARCHAR(15)'),
-]
+    StreetName = typing.Annotated[
+        str,
+        pydantic.Field(min_length=3, max_length=200),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_street_name, 'no special characters allowed in street name')
+        ])),
+        PGHint(type='VARCHAR(200)'),
+    ]
 
 
-def valid_city_name(self: str) -> bool:
-    """without special characters"""
-    from re import fullmatch
-    return fullmatch(r'[ \S]{3,100}', self) is not None
+    @staticmethod
+    def valid_building_no(value: str) -> bool:
+        """without special characters"""
+        from re import fullmatch
+        return fullmatch(r'[ \S]{,20}', value) is not None
 
-CityName = typing.Annotated[
-    str,
-    pydantic.Field(min_length=3, max_length=100),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_city_name, 'no special characters allowed in city name')
-    ])),
-    PGHint(type='VARCHAR(100)'),
-]
-
-
-def valid_country_code(self: str) -> bool:
-    """two uppercase ascci letters"""
-    from re import fullmatch
-    return fullmatch(r'[A-Z]{2}', self) is not None
-
-CountryCode = typing.Annotated[
-    str,
-    pydantic.Field(min_length=2, max_length=2),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_country_code, 'country code must consists from two uppercase ascii letters')
-    ])),
-    PGHint(type='CHAR(2)'),
-]
+    BuildingNo = typing.Annotated[
+        str,
+        pydantic.Field(max_length=20),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_building_no, 'no special characters allowed in building number')
+        ])),
+        PGHint(type='VARCHAR(20)'),
+    ]
 
 
-def valid_country_name(self: str) -> bool:
-    """without special characters"""
-    from re import fullmatch
-    return fullmatch(r'[ \S]{2,100}', self) is not None
+    @staticmethod
+    def valid_apartment_no(value: str) -> bool:
+        """without special characters"""
+        from re import fullmatch
+        return fullmatch(r'[ \S]{,20}', value) is not None
 
-CountryName = typing.Annotated[
-    str,
-    pydantic.Field(min_length=2, max_length=100),
-    pydantic.AfterValidator(functools.partial[str](field_validator, [
-        (valid_country_name, 'no special characters in country name')
-    ])),
-    PGHint(type='VARCHAR(100)'),
-]
-
-
-class Country(BaxModel):
-
-    bax_model_kind: typing.ClassVar[BaxModelKind] = BaxModelKind.COMPOSITE
-
-    code: CountryCode
-    name: CountryName
-
-    # @pydantic.model_validator(mode='after')
-    # @BaxModel.with_predicate(errmsg='test predicate')
-    # def valid_test_pred(self) -> bool:
-    #     """test predicate"""
-    #     return True
+    ApartmentNo = typing.Annotated[
+        str,
+        pydantic.Field(max_length=20),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_apartment_no, 'no special characters allowed in apartment number')
+        ])),
+        PGHint(type='VARCHAR(20)'),
+    ]
 
 
-class Address(BaxModel):
+    @staticmethod
+    def valid_zip_code(value: str) -> bool:
+        """without special characters"""
+        from re import fullmatch
+        return fullmatch(r'[ \S]{2,15}', value) is not None
 
-    bax_model_kind: typing.ClassVar[BaxModelKind] = BaxModelKind.COMPOSITE
+    ZipCode = typing.Annotated[
+        str,
+        pydantic.Field(min_length=2, max_length=15),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_zip_code, 'no special characters allowed in zip code')
+        ])),
+        PGHint(type='VARCHAR(15)'),
+    ]
 
-    street_name: StreetName
-    building_no: BuildingNo
-    apartment_no: ApartmentNo
-    zip_code: ZipCode
-    city_name: CityName
-    country: Country
 
-    @pydantic.model_validator(mode='after')
-    @BaxModel.with_predicate(errmsg='wrong format of zip code')
-    def valid_zip_code(self) -> bool:
-        """zip code proper format"""
-        import re
-        return (
-            re.fullmatch(r'[0-9]{2}-[0-9]{3}', self.zip_code) is not None
-            if self.country.code == 'PL' else True
-        )
+    @staticmethod
+    def valid_city_name(value: str) -> bool:
+        """without special characters"""
+        from re import fullmatch
+        return fullmatch(r'[ \S]{3,100}', value) is not None
+
+    CityName = typing.Annotated[
+        str,
+        pydantic.Field(min_length=3, max_length=100),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_city_name, 'no special characters allowed in city name')
+        ])),
+        PGHint(type='VARCHAR(100)'),
+    ]
+
+
+    @staticmethod
+    def valid_country_code(value: str) -> bool:
+        """two uppercase ascci letters"""
+        from re import fullmatch
+        return fullmatch(r'[A-Z]{2}', value) is not None
+
+    CountryCode = typing.Annotated[
+        str,
+        pydantic.Field(min_length=2, max_length=2),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_country_code, 'country code must consists from two uppercase ascii letters')
+        ])),
+        PGHint(type='CHAR(2)'),
+    ]
+
+
+    @staticmethod
+    def valid_country_name(value: str) -> bool:
+        """without special characters"""
+        from re import fullmatch
+        return fullmatch(r'[ \S]{2,100}', value) is not None
+
+    CountryName = typing.Annotated[
+        str,
+        pydantic.Field(min_length=2, max_length=100),
+        pydantic.AfterValidator(functools.partial[str](field_validator, [
+            (valid_country_name, 'no special characters in country name')
+        ])),
+        PGHint(type='VARCHAR(100)'),
+    ]
+
+
+    class Country(BaxModel):
+
+        bax_model_kind: typing.ClassVar[BaxModelKind] = BaxModelKind.COMPOSITE
+
+        code: sch.CountryCode
+        name: sch.CountryName
+
+        # @pydantic.model_validator(mode='after')
+        # @BaxModel.with_predicate(errmsg='test predicate')
+        # def valid_test_pred(self) -> bool:
+        #     """test predicate"""
+        #     return True
+
+
+    class Address(BaxModel):
+
+        bax_model_kind: typing.ClassVar[BaxModelKind] = BaxModelKind.COMPOSITE
+
+        street_name: sch.StreetName
+        building_no: sch.BuildingNo
+        apartment_no: sch.ApartmentNo
+        zip_code: sch.ZipCode
+        city_name: sch.CityName
+        country: sch.Country
+
+        @pydantic.model_validator(mode='after')
+        @BaxModel.with_predicate(errmsg='wrong format of zip code')
+        def valid_zip_code(self) -> bool:
+            """zip code proper format"""
+            import re
+            return (
+                re.fullmatch(r'[0-9]{2}-[0-9]{3}', self.zip_code) is not None
+                if self.country.code == 'PL' else True
+            )
+
+        @pydantic.computed_field
+        @functools.cached_property
+        def street_line(self) -> sch.GenericText:
+            """street_line"""
+            return ' '.join([self.street_name, self.building_no, self.apartment_no])
+
+        @pydantic.computed_field
+        @functools.cached_property
+        def city_line(self) -> sch.GenericText:
+            """city line"""
+            return ' '.join([self.zip_code, self.city_name])
 
 
 # ---- sql generator
 
-import sys
+si: SchemaInfo = SchemaInfo.of(sch)
 
-
-mi: ModuleInfo = ModuleInfo.of(sys.modules[__name__])
+# zwykłe property
+# print(inspect.getsource(Address.model_computed_fields['street_line'].wrapped_property.fget))
+# print(inspect.getsource(Address.model_computed_fields['street_line'].wrapped_property.func))
+# print(Address.model_computed_fields.items())
 
 sql = f"""--** generated by customers.py **--
 
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 
-{'\n'.join([f"DROP DOMAIN IF EXISTS {s.name} CASCADE;" for s in mi.scalars])}
-{'\n'.join([f"DROP TYPE IF EXISTS {c.name}_t CASCADE;" for c in mi.composites])}
+DROP SCHEMA IF EXISTS {sch.__name__} CASCADE;
 
-{'\n\n\n'.join([s.sql_create_cmd for s in mi.scalars])}
+{'\n'.join([f"DROP DOMAIN IF EXISTS {s.schema}.{s.name} CASCADE;" for s in si.scalars])}
+{'\n'.join([f"DROP TYPE IF EXISTS {c.schema}.{c.name}_t CASCADE;" for c in si.composites])}
 
+CREATE SCHEMA IF NOT EXISTS {sch.__name__};
 
-{'\n\n\n'.join([s.sql_constraints_cmd for s in mi.scalars if s.sql_constraints_cmd])}
-
-
-{'\n\n\n'.join([c.sql_create_cmd for c in mi.composites])}
+{'\n\n\n'.join([s.sql_create_cmd for s in si.scalars])}
 
 
-{'\n\n\n'.join([c.sql_constraints_cmd for c in mi.composites if c.sql_constraints_cmd])}
+{'\n\n\n'.join([s.sql_constraints_cmd for s in si.scalars if s.sql_constraints_cmd])}
 
 
-SELECT Country('PL', 'POLAND');
-SELECT Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', Country('PL', 'Polska'));
+{'\n\n\n'.join([c.sql_create_cmd for c in si.composites])}
+
+
+{'\n\n\n'.join([c.sql_constraints_cmd for c in si.composites if c.sql_constraints_cmd])}
+
+
+SELECT sch.Country('PL', 'POLAND');
+SELECT sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'));
 
 """
 
@@ -596,8 +652,8 @@ with open(__file__.replace('.py', '_generated.sql'), 'w') as f:
 
 # ---- mini happy test
 
-c = Country(code='PL', name='Poland')
-a = Address(
+c = sch.Country(code='PL', name='Poland')
+a = sch.Address(
         street_name='Dąb Rozwadowskiego',
         building_no='6',
         apartment_no='5',

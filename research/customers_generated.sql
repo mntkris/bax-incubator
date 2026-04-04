@@ -2,177 +2,185 @@
 
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 
-DROP DOMAIN IF EXISTS CustomerSymbol CASCADE;
-DROP DOMAIN IF EXISTS StreetName CASCADE;
-DROP DOMAIN IF EXISTS BuildingNo CASCADE;
-DROP DOMAIN IF EXISTS ApartmentNo CASCADE;
-DROP DOMAIN IF EXISTS ZipCode CASCADE;
-DROP DOMAIN IF EXISTS CityName CASCADE;
-DROP DOMAIN IF EXISTS CountryCode CASCADE;
-DROP DOMAIN IF EXISTS CountryName CASCADE;
-DROP TYPE IF EXISTS Country_t CASCADE;
-DROP TYPE IF EXISTS Address_t CASCADE;
+DROP SCHEMA IF EXISTS sch CASCADE;
 
-CREATE DOMAIN CustomerSymbol AS VARCHAR(20);
+DROP DOMAIN IF EXISTS sch.GenericText CASCADE;
+DROP DOMAIN IF EXISTS sch.CustomerSymbol CASCADE;
+DROP DOMAIN IF EXISTS sch.StreetName CASCADE;
+DROP DOMAIN IF EXISTS sch.BuildingNo CASCADE;
+DROP DOMAIN IF EXISTS sch.ApartmentNo CASCADE;
+DROP DOMAIN IF EXISTS sch.ZipCode CASCADE;
+DROP DOMAIN IF EXISTS sch.CityName CASCADE;
+DROP DOMAIN IF EXISTS sch.CountryCode CASCADE;
+DROP DOMAIN IF EXISTS sch.CountryName CASCADE;
+DROP TYPE IF EXISTS sch.Country_t CASCADE;
+DROP TYPE IF EXISTS sch.Address_t CASCADE;
 
+CREATE SCHEMA IF NOT EXISTS sch;
 
-CREATE DOMAIN StreetName AS VARCHAR(200);
-
-
-CREATE DOMAIN BuildingNo AS VARCHAR(20);
-
-
-CREATE DOMAIN ApartmentNo AS VARCHAR(20);
+CREATE DOMAIN sch.GenericText AS TEXT;
 
 
-CREATE DOMAIN ZipCode AS VARCHAR(15);
+CREATE DOMAIN sch.CustomerSymbol AS VARCHAR(20);
 
 
-CREATE DOMAIN CityName AS VARCHAR(100);
+CREATE DOMAIN sch.StreetName AS VARCHAR(200);
 
 
-CREATE DOMAIN CountryCode AS CHAR(2);
+CREATE DOMAIN sch.BuildingNo AS VARCHAR(20);
 
 
-CREATE DOMAIN CountryName AS VARCHAR(100);
+CREATE DOMAIN sch.ApartmentNo AS VARCHAR(20);
 
 
-CREATE OR REPLACE FUNCTION valid_customer_symbol_format(self VARCHAR(20))
+CREATE DOMAIN sch.ZipCode AS VARCHAR(15);
+
+
+CREATE DOMAIN sch.CityName AS VARCHAR(100);
+
+
+CREATE DOMAIN sch.CountryCode AS CHAR(2);
+
+
+CREATE DOMAIN sch.CountryName AS VARCHAR(100);
+
+
+CREATE OR REPLACE FUNCTION sch.valid_customer_symbol_format(value VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # only digits letters and - [ ]
     from re import fullmatch
     return fullmatch(r'[0-9a-zA-z\-\[\]]{10,20}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_format
-    CHECK (valid_customer_symbol_format(VALUE));
+ALTER DOMAIN sch.CustomerSymbol ADD CONSTRAINT ck__sch__valid_customer_symbol_format
+    CHECK (sch.valid_customer_symbol_format(VALUE));
 
-CREATE OR REPLACE FUNCTION valid_customer_symbol_first_char(self VARCHAR(20))
+CREATE OR REPLACE FUNCTION sch.valid_customer_symbol_first_char(value VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # first char letter or cipher
     return 'a' <= value[0] <= 'z' or 'A' <= value[0] <= 'Z' or '0' <= value[0] <= '9'
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN CustomerSymbol ADD CONSTRAINT ck__valid_customer_symbol_first_char
-    CHECK (valid_customer_symbol_first_char(VALUE));
+ALTER DOMAIN sch.CustomerSymbol ADD CONSTRAINT ck__sch__valid_customer_symbol_first_char
+    CHECK (sch.valid_customer_symbol_first_char(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_street_name(self VARCHAR(200))
+CREATE OR REPLACE FUNCTION sch.valid_street_name(value VARCHAR(200))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{3,200}', self) is not None
+    return fullmatch(r'[ \S]{3,200}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN StreetName ADD CONSTRAINT ck__valid_street_name
-    CHECK (valid_street_name(VALUE));
+ALTER DOMAIN sch.StreetName ADD CONSTRAINT ck__sch__valid_street_name
+    CHECK (sch.valid_street_name(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_building_no(self VARCHAR(20))
+CREATE OR REPLACE FUNCTION sch.valid_building_no(value VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', self) is not None
+    return fullmatch(r'[ \S]{,20}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN BuildingNo ADD CONSTRAINT ck__valid_building_no
-    CHECK (valid_building_no(VALUE));
+ALTER DOMAIN sch.BuildingNo ADD CONSTRAINT ck__sch__valid_building_no
+    CHECK (sch.valid_building_no(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_apartment_no(self VARCHAR(20))
+CREATE OR REPLACE FUNCTION sch.valid_apartment_no(value VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{,20}', self) is not None
+    return fullmatch(r'[ \S]{,20}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN ApartmentNo ADD CONSTRAINT ck__valid_apartment_no
-    CHECK (valid_apartment_no(VALUE));
+ALTER DOMAIN sch.ApartmentNo ADD CONSTRAINT ck__sch__valid_apartment_no
+    CHECK (sch.valid_apartment_no(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_zip_code(self VARCHAR(15))
+CREATE OR REPLACE FUNCTION sch.valid_zip_code(value VARCHAR(15))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{2,15}', self) is not None
+    return fullmatch(r'[ \S]{2,15}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN ZipCode ADD CONSTRAINT ck__valid_zip_code
-    CHECK (valid_zip_code(VALUE));
+ALTER DOMAIN sch.ZipCode ADD CONSTRAINT ck__sch__valid_zip_code
+    CHECK (sch.valid_zip_code(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_city_name(self VARCHAR(100))
+CREATE OR REPLACE FUNCTION sch.valid_city_name(value VARCHAR(100))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{3,100}', self) is not None
+    return fullmatch(r'[ \S]{3,100}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN CityName ADD CONSTRAINT ck__valid_city_name
-    CHECK (valid_city_name(VALUE));
+ALTER DOMAIN sch.CityName ADD CONSTRAINT ck__sch__valid_city_name
+    CHECK (sch.valid_city_name(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_country_code(self CHAR(2))
+CREATE OR REPLACE FUNCTION sch.valid_country_code(value CHAR(2))
 RETURNS BOOLEAN AS $plpython$
     # two uppercase ascci letters
     from re import fullmatch
-    return fullmatch(r'[A-Z]{2}', self) is not None
+    return fullmatch(r'[A-Z]{2}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN CountryCode ADD CONSTRAINT ck__valid_country_code
-    CHECK (valid_country_code(VALUE));
+ALTER DOMAIN sch.CountryCode ADD CONSTRAINT ck__sch__valid_country_code
+    CHECK (sch.valid_country_code(VALUE));
 
 
-CREATE OR REPLACE FUNCTION valid_country_name(self VARCHAR(100))
+CREATE OR REPLACE FUNCTION sch.valid_country_name(value VARCHAR(100))
 RETURNS BOOLEAN AS $plpython$
     # without special characters
     from re import fullmatch
-    return fullmatch(r'[ \S]{2,100}', self) is not None
+    return fullmatch(r'[ \S]{2,100}', value) is not None
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN CountryName ADD CONSTRAINT ck__valid_country_name
-    CHECK (valid_country_name(VALUE));
+ALTER DOMAIN sch.CountryName ADD CONSTRAINT ck__sch__valid_country_name
+    CHECK (sch.valid_country_name(VALUE));
 
 
-CREATE TYPE Country_t AS (
-    code CountryCode,
-    name CountryName
+CREATE TYPE sch.Country_t AS (
+    code sch.CountryCode,
+    name sch.CountryName
 );
 
-CREATE DOMAIN Country AS Country_t;
+CREATE DOMAIN sch.Country AS sch.Country_t;
 
-CREATE OR REPLACE FUNCTION Country(
-    code CountryCode,
-    name CountryName
-) RETURNS Country AS $SQL$
+CREATE OR REPLACE FUNCTION sch.Country(
+    code sch.CountryCode,
+    name sch.CountryName
+) RETURNS sch.Country AS $SQL$
     SELECT ROW(code, name);
 $SQL$ LANGUAGE SQL IMMUTABLE;
 
 
-CREATE TYPE Address_t AS (
-    street_name StreetName,
-    building_no BuildingNo,
-    apartment_no ApartmentNo,
-    zip_code ZipCode,
-    city_name CityName,
-    country Country
+CREATE TYPE sch.Address_t AS (
+    street_name sch.StreetName,
+    building_no sch.BuildingNo,
+    apartment_no sch.ApartmentNo,
+    zip_code sch.ZipCode,
+    city_name sch.CityName,
+    country sch.Country
 );
 
-CREATE DOMAIN Address AS Address_t;
+CREATE DOMAIN sch.Address AS sch.Address_t;
 
-CREATE OR REPLACE FUNCTION Address(
-    street_name StreetName,
-    building_no BuildingNo,
-    apartment_no ApartmentNo,
-    zip_code ZipCode,
-    city_name CityName,
-    country Country
-) RETURNS Address AS $SQL$
+CREATE OR REPLACE FUNCTION sch.Address(
+    street_name sch.StreetName,
+    building_no sch.BuildingNo,
+    apartment_no sch.ApartmentNo,
+    zip_code sch.ZipCode,
+    city_name sch.CityName,
+    country sch.Country
+) RETURNS sch.Address AS $SQL$
     SELECT ROW(street_name, building_no, apartment_no, zip_code, city_name, country);
 $SQL$ LANGUAGE SQL IMMUTABLE;
 
 
-CREATE OR REPLACE FUNCTION valid_zip_code(self Address_t)
+CREATE OR REPLACE FUNCTION sch.valid_zip_code(self sch.Address_t)
 RETURNS BOOLEAN AS $plpython$
     # zip code proper format
     import re
@@ -182,10 +190,10 @@ RETURNS BOOLEAN AS $plpython$
     )
 $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
-ALTER DOMAIN Address ADD CONSTRAINT ck__valid_zip_code
-    CHECK (valid_zip_code(VALUE));
+ALTER DOMAIN sch.Address ADD CONSTRAINT ck__sch__valid_zip_code
+    CHECK (sch.valid_zip_code(VALUE));
 
 
-SELECT Country('PL', 'POLAND');
-SELECT Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', Country('PL', 'Polska'));
+SELECT sch.Country('PL', 'POLAND');
+SELECT sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'));
 
