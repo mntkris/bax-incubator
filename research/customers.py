@@ -17,6 +17,7 @@ to postgres DOMAIN.
 """
 
 
+import types
 import typing
 import pydantic
 import inspect
@@ -119,6 +120,30 @@ def get_schema_members(
     return [(name, obj) for name, obj in sch.__dict__.items() if predicate(obj)]
 
 
+def dictionarize(body: str) -> str:
+    def repl(match: typing.Match[str]) -> str:
+        parts = match.group(0).split('.')[1:]   # omit self
+        return "self" + "".join(f"['{p}']" for p in parts)
+    return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)
+
+def function_parts(f: function | types.FunctionType, body_postprocesor: typing.Callable[[str], str] | None = None) -> tuple[str, str, str]:
+    """Returns doc, body and return type of function"""
+    doc: str | None = inspect.getdoc(f)
+    if not doc:
+        raise ValueError(f'Predicate must have docstring in [{f.__name__}]')
+    
+    body: str = textwrap.indent(textwrap.dedent(
+        inspect.getsource(typing.cast(typing.Any, f)).split(f'"""{doc}"""\n')[-1].strip('\n')
+    ), '    ')
+    if not body:
+        raise ValueError(f'No body of predicate found [{f.__name__}]')
+
+    if body_postprocesor:
+        body = body_postprocesor(body)
+
+    return (doc, body, f.__annotations__['return'])
+
+
 @dataclasses.dataclass(frozen=True)
 class ScalarPredicateInfo:
     """Intermediate metadata of scalar predicate.
@@ -155,15 +180,7 @@ class ScalarPredicateInfo:
                 cannot be discovered from function's source code
         """
         
-        doc: str | None = inspect.getdoc(f)
-        if not doc:
-            raise ValueError(f'Predicate must have docstring in [{f.__name__}]')
-        
-        body: str = textwrap.indent(textwrap.dedent(
-            inspect.getsource(typing.cast(typing.Any, f)).split(f'"""{doc}"""\n')[-1].strip('\n')
-        ), '    ')
-        if not body:
-            raise ValueError(f'No body of predicate found [{f.__name__}]')
+        doc, body, __ = function_parts(f)
         
         return ScalarPredicateInfo(schema=schema, name=f.__name__, pgtype=pgtype, doc=doc, body=body)
 
@@ -216,21 +233,7 @@ class CompositePredicateInfo:
                 cannot be discovered from function's source code
         """
 
-        def dictionarize(body: str) -> str:
-            def repl(match: typing.Match[str]) -> str:
-                parts = match.group(0).split('.')[1:]   # omit self
-                return "self" + "".join(f"['{p}']" for p in parts)
-            return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)
-
-        doc: str | None = inspect.getdoc(f)
-        if not doc:
-            raise ValueError(f'Predicate must have docstring in [{f.__name__}]')
-        
-        body: str = textwrap.indent(textwrap.dedent(
-            inspect.getsource(typing.cast(typing.Any, f)).split(f'"""{doc}"""\n')[-1].strip('\n')
-        ), '    ')
-        if not body:
-            raise ValueError(f'No body of predicate found [{f.__name__}]')
+        doc, body, __ = function_parts(f, dictionarize)
         
         return CompositePredicateInfo(schema=schema, name=f.__name__, pgtype=pgtype, doc=doc, body=dictionarize(body))
 
@@ -252,7 +255,7 @@ type Property[R] = property | functools.cached_property[R]
 @dataclasses.dataclass(frozen=True)
 class PropertyInfo[R]:
 
-    schame: str
+    schema: str
     name: str
     pgtype: str
     rettype: str
@@ -261,7 +264,14 @@ class PropertyInfo[R]:
 
     @staticmethod
     def of(schema: str, cfi: pydantic.fields.ComputedFieldInfo, name: str, pgtype: str) -> PropertyInfo[R]:
-        return PropertyInfo[R](schema, name, pgtype, cfi.return_type.__metadata__[-1], 'doc', 'body')
+        func: typing.Any = (
+            cfi.wrapped_property.fget if isinstance(cfi.wrapped_property, property) else
+            cfi.wrapped_property.func
+        )
+        
+        doc, body, rettype = function_parts(func, dictionarize)
+
+        return PropertyInfo[R](schema=schema, name=name, pgtype=pgtype, rettype=rettype, doc=doc, body=body)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -358,10 +368,10 @@ class CompositeInfo:
                  CompositePredicateInfo.of(schema, func, name)
                  for func in cls.predicates 
                  if func.__qualname__.split('.')[-2] == cls.__name__],
-            properties=[])
-            #     PropertyInfo[typing.Any].of(cfi=cfi, name=name, pgtype=cls.__name__)
-            #     for name, cfi in cls.model_computed_fields.items()
-            # ])
+            properties=[
+                PropertyInfo[typing.Any].of(schema, cfi=cfi, name=name, pgtype=cls.__name__)
+                for name, cfi in cls.model_computed_fields.items()
+            ])
     
     
     @functools.cached_property
@@ -420,6 +430,7 @@ class SchemaInfo:
 # scalars must be indpendent each other and use only distributed with underlaying python features
 
 class sch:
+
     GenericText = typing.Annotated[
         str,
         pydantic.Field(),
@@ -600,7 +611,7 @@ class sch:
         @pydantic.computed_field
         @functools.cached_property
         def street_line(self) -> sch.GenericText:
-            """street_line"""
+            """street line"""
             return ' '.join([self.street_name, self.building_no, self.apartment_no])
 
         @pydantic.computed_field
@@ -614,19 +625,14 @@ class sch:
 
 si: SchemaInfo = SchemaInfo.of(sch)
 
-# zwykłe property
-# print(inspect.getsource(Address.model_computed_fields['street_line'].wrapped_property.fget))
-# print(inspect.getsource(Address.model_computed_fields['street_line'].wrapped_property.func))
-# print(Address.model_computed_fields.items())
-
 sql = f"""--** generated by customers.py **--
 
 CREATE EXTENSION IF NOT EXISTS plpython3u;
 
 DROP SCHEMA IF EXISTS {sch.__name__} CASCADE;
 
-{'\n'.join([f"DROP DOMAIN IF EXISTS {s.schema}.{s.name} CASCADE;" for s in si.scalars])}
-{'\n'.join([f"DROP TYPE IF EXISTS {c.schema}.{c.name}_t CASCADE;" for c in si.composites])}
+{'\n'.join([f"--DROP DOMAIN IF EXISTS {s.schema}.{s.name} CASCADE;" for s in si.scalars])}
+{'\n'.join([f"--DROP TYPE IF EXISTS {c.schema}.{c.name}_t CASCADE;" for c in si.composites])}
 
 CREATE SCHEMA IF NOT EXISTS {sch.__name__};
 
