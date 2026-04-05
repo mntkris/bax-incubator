@@ -157,6 +157,8 @@ CREATE OR REPLACE FUNCTION sch.Country(
 $SQL$ LANGUAGE SQL IMMUTABLE;
 
 
+
+
 CREATE TYPE sch.Address_t AS (
     street_name sch.StreetName,
     building_no sch.BuildingNo,
@@ -179,6 +181,18 @@ CREATE OR REPLACE FUNCTION sch.Address(
     SELECT ROW(street_name, building_no, apartment_no, zip_code, city_name, country);
 $SQL$ LANGUAGE SQL IMMUTABLE;
 
+CREATE OR REPLACE FUNCTION sch.street_line(self sch.Address_t)
+RETURNS sch.GenericText AS $plpython$
+    # street line
+    return ' '.join([self['street_name'], self['building_no'], self['apartment_no']])
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+CREATE OR REPLACE FUNCTION sch.city_line(self sch.Address_t)
+RETURNS sch.GenericText AS $plpython$
+    # city line
+    return ' '.join([self['zip_code'], self['city_name']])
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
 
 CREATE OR REPLACE FUNCTION sch.valid_zip_code(self sch.Address_t)
 RETURNS BOOLEAN AS $plpython$
@@ -193,7 +207,9 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 ALTER DOMAIN sch.Address ADD CONSTRAINT ck__sch__valid_zip_code
     CHECK (sch.valid_zip_code(VALUE));
 
-
+SET search_path TO sch, pg_temp;
 SELECT sch.Country('PL', 'POLAND');
 SELECT sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'));
+SELECT (sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'))).street_line;
+SELECT (sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'))).city_line;
 

@@ -126,7 +126,10 @@ def dictionarize(body: str) -> str:
         return "self" + "".join(f"['{p}']" for p in parts)
     return re.sub(r'\bself(?:\.[A-Za-z_][A-Za-z0-9_]*)+', repl, body)
 
-def function_parts(f: function | types.FunctionType, body_postprocesor: typing.Callable[[str], str] | None = None) -> tuple[str, str, str]:
+def function_parts(
+        f: function | types.FunctionType, 
+        body_postprocesor: typing.Callable[[str], str] | None = None
+) -> tuple[str, str, typing.Any]:
     """Returns doc, body and return type of function"""
     doc: str | None = inspect.getdoc(f)
     if not doc:
@@ -270,8 +273,28 @@ class PropertyInfo[R]:
         )
         
         doc, body, rettype = function_parts(func, dictionarize)
+        print(rettype.__metadata__[-1])
 
-        return PropertyInfo[R](schema=schema, name=name, pgtype=pgtype, rettype=rettype, doc=doc, body=body)
+        return PropertyInfo[R](
+            schema=schema, 
+            name=name, 
+            pgtype=pgtype, 
+            rettype=rettype.__metadata__[-1], 
+            doc=doc, 
+            body=body
+        )
+
+    @functools.cached_property
+    def sql_create_cmd(self) -> str:
+        """Returns sql command creating plpython3u stored function for property"""
+
+        return '\n'.join([
+            f"CREATE OR REPLACE FUNCTION {self.schema}.{self.name}(self {self.schema}.{self.pgtype}_t)",
+            f"RETURNS {self.schema}.{self.rettype} AS $plpython$",
+            f"{textwrap.indent(self.doc, '    # ')}",
+            f"{self.body}",
+            f"$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; ",
+        ])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -378,6 +401,9 @@ class CompositeInfo:
     def sql_create_cmd(self) -> str:
         attrs: str = ',\n'.join([f"    {a} {self.schema}.{t}" for a, t in self.fields])
         args: str = ', '.join([a for a, __ in self.fields])
+        properties_cmd: str = '\n\n'.join([
+            p.sql_create_cmd for p in self.properties
+        ])
         return '\n'.join([
             f"CREATE TYPE {self.schema}.{self.name}_t AS (",
             f"{attrs}",
@@ -389,7 +415,9 @@ class CompositeInfo:
             f"{attrs}",
             f") RETURNS {self.schema}.{self.name} AS $SQL$",
             f"    SELECT ROW({args});",
-            f"$SQL$ LANGUAGE SQL IMMUTABLE;"
+            f"$SQL$ LANGUAGE SQL IMMUTABLE;",
+            f"",
+            f"{properties_cmd}",
         ])
     
     @functools.cached_property
@@ -647,9 +675,11 @@ CREATE SCHEMA IF NOT EXISTS {sch.__name__};
 
 {'\n\n\n'.join([c.sql_constraints_cmd for c in si.composites if c.sql_constraints_cmd])}
 
-
+SET search_path TO sch, pg_temp;
 SELECT sch.Country('PL', 'POLAND');
 SELECT sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'));
+SELECT (sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'))).street_line;
+SELECT (sch.Address('Dąb Rozwadowskiego', '6', '5', '00-902', 'Warszawa', sch.Country('PL', 'Polska'))).city_line;
 
 """
 
@@ -666,3 +696,7 @@ a = sch.Address(
         zip_code='00-999',
         city_name='Warsaw',
         country=c)
+print(c)
+print(a)
+print(a.street_line)
+print(a.city_line)
