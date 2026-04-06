@@ -452,6 +452,31 @@ class SchemaInfo:
             scalars=scalars, 
             composites=composites
         )
+    
+    @functools.cached_property
+    def scalars_create_cmd(self) -> str:
+        return '\n\n\n'.join([
+            s.sql_create_cmd for s in si.scalars
+        ])
+    
+    @functools.cached_property
+    def composites_create_cmd(self) -> str:
+        return '\n\n\n'.join([
+            c.sql_create_cmd for c in si.composites
+        ])
+        
+    @functools.cached_property
+    def scalars_constraints_cmd(self) -> str:
+        return '\n\n\n'.join([
+            s.sql_constraints_cmd for s in si.scalars if s.sql_constraints_cmd
+        ])
+    
+    @functools.cached_property
+    def composites_constraints_cmd(self) -> str:
+        return '\n\n\n'.join([
+            c.sql_constraints_cmd for c in si.composites if c.sql_constraints_cmd
+        ])
+
         
     
 # predicates: exactly one arg named value, must have unique (in function text) one-line(for now) docstring in """ brackets
@@ -664,16 +689,16 @@ DROP SCHEMA IF EXISTS {sch.__name__} CASCADE;
 
 CREATE SCHEMA IF NOT EXISTS {sch.__name__};
 
-{'\n\n\n'.join([s.sql_create_cmd for s in si.scalars])}
+{si.scalars_create_cmd}
 
 
-{'\n\n\n'.join([s.sql_constraints_cmd for s in si.scalars if s.sql_constraints_cmd])}
+{si.composites_create_cmd}
 
 
-{'\n\n\n'.join([c.sql_create_cmd for c in si.composites])}
+{si.scalars_constraints_cmd}
 
 
-{'\n\n\n'.join([c.sql_constraints_cmd for c in si.composites if c.sql_constraints_cmd])}
+{si.composites_constraints_cmd}
 
 SET search_path TO sch, pg_temp;
 SELECT sch.Country('PL', 'POLAND');

@@ -45,6 +45,58 @@ CREATE DOMAIN sch.CountryCode AS CHAR(2);
 CREATE DOMAIN sch.CountryName AS VARCHAR(100);
 
 
+CREATE TYPE sch.Country_t AS (
+    code sch.CountryCode,
+    name sch.CountryName
+);
+
+CREATE DOMAIN sch.Country AS sch.Country_t;
+
+CREATE OR REPLACE FUNCTION sch.Country(
+    code sch.CountryCode,
+    name sch.CountryName
+) RETURNS sch.Country AS $SQL$
+    SELECT ROW(code, name);
+$SQL$ LANGUAGE SQL IMMUTABLE;
+
+
+
+
+CREATE TYPE sch.Address_t AS (
+    street_name sch.StreetName,
+    building_no sch.BuildingNo,
+    apartment_no sch.ApartmentNo,
+    zip_code sch.ZipCode,
+    city_name sch.CityName,
+    country sch.Country
+);
+
+CREATE DOMAIN sch.Address AS sch.Address_t;
+
+CREATE OR REPLACE FUNCTION sch.Address(
+    street_name sch.StreetName,
+    building_no sch.BuildingNo,
+    apartment_no sch.ApartmentNo,
+    zip_code sch.ZipCode,
+    city_name sch.CityName,
+    country sch.Country
+) RETURNS sch.Address AS $SQL$
+    SELECT ROW(street_name, building_no, apartment_no, zip_code, city_name, country);
+$SQL$ LANGUAGE SQL IMMUTABLE;
+
+CREATE OR REPLACE FUNCTION sch.street_line(self sch.Address_t)
+RETURNS sch.GenericText AS $plpython$
+    # street line
+    return ' '.join([self['street_name'], self['building_no'], self['apartment_no']])
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+CREATE OR REPLACE FUNCTION sch.city_line(self sch.Address_t)
+RETURNS sch.GenericText AS $plpython$
+    # city line
+    return ' '.join([self['zip_code'], self['city_name']])
+$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
+
+
 CREATE OR REPLACE FUNCTION sch.valid_customer_symbol_format(value VARCHAR(20))
 RETURNS BOOLEAN AS $plpython$
     # only digits letters and - [ ]
@@ -140,58 +192,6 @@ $plpython$ LANGUAGE plpython3u IMMUTABLE STRICT;
 
 ALTER DOMAIN sch.CountryName ADD CONSTRAINT ck__sch__valid_country_name
     CHECK (sch.valid_country_name(VALUE));
-
-
-CREATE TYPE sch.Country_t AS (
-    code sch.CountryCode,
-    name sch.CountryName
-);
-
-CREATE DOMAIN sch.Country AS sch.Country_t;
-
-CREATE OR REPLACE FUNCTION sch.Country(
-    code sch.CountryCode,
-    name sch.CountryName
-) RETURNS sch.Country AS $SQL$
-    SELECT ROW(code, name);
-$SQL$ LANGUAGE SQL IMMUTABLE;
-
-
-
-
-CREATE TYPE sch.Address_t AS (
-    street_name sch.StreetName,
-    building_no sch.BuildingNo,
-    apartment_no sch.ApartmentNo,
-    zip_code sch.ZipCode,
-    city_name sch.CityName,
-    country sch.Country
-);
-
-CREATE DOMAIN sch.Address AS sch.Address_t;
-
-CREATE OR REPLACE FUNCTION sch.Address(
-    street_name sch.StreetName,
-    building_no sch.BuildingNo,
-    apartment_no sch.ApartmentNo,
-    zip_code sch.ZipCode,
-    city_name sch.CityName,
-    country sch.Country
-) RETURNS sch.Address AS $SQL$
-    SELECT ROW(street_name, building_no, apartment_no, zip_code, city_name, country);
-$SQL$ LANGUAGE SQL IMMUTABLE;
-
-CREATE OR REPLACE FUNCTION sch.street_line(self sch.Address_t)
-RETURNS sch.GenericText AS $plpython$
-    # street line
-    return ' '.join([self['street_name'], self['building_no'], self['apartment_no']])
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
-
-CREATE OR REPLACE FUNCTION sch.city_line(self sch.Address_t)
-RETURNS sch.GenericText AS $plpython$
-    # city line
-    return ' '.join([self['zip_code'], self['city_name']])
-$plpython$ LANGUAGE plpython3u IMMUTABLE STRICT; 
 
 
 CREATE OR REPLACE FUNCTION sch.valid_zip_code(self sch.Address_t)
